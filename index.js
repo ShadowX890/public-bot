@@ -46,7 +46,6 @@ function saveDatabase(data) {
 client.once('ready', async () => {
     console.log(`✅ บอท ${client.user.tag} ออนไลน์และพร้อมทำงาน!`);
     
-    // ตั้งสถานะบอทให้ดูเท่ๆ
     client.user.setActivity('/info เพื่อดูวิธีใช้', { type: ActivityType.Listening });
 
     const commands = [
@@ -56,10 +55,10 @@ client.once('ready', async () => {
         },
         {
             name: 'verify',
-            description: 'สร้างปุ่ม Verify (ต้องตั้งค่า roleID และ verifylog ก่อน)'
+            description: 'สร้างปุ่ม Verify (ตามที่ตั้งค่าไว้)'
         },
         {
-            name: 'roleid', // Discord บังคับตัวพิมพ์เล็กหมด
+            name: 'roleid', 
             description: '⚙️ กำหนด Role ID ที่จะแจกเมื่อ Verify ผ่าน',
             options: [{
                 name: 'role',
@@ -69,7 +68,7 @@ client.once('ready', async () => {
             }]
         },
         {
-            name: 'verifylog', // Discord บังคับตัวพิมพ์เล็กหมด
+            name: 'verifylog', 
             description: '⚙️ กำหนดห้องที่จะส่ง Log',
             options: [{
                 name: 'channel',
@@ -80,10 +79,12 @@ client.once('ready', async () => {
         },
         {
             name: 'set-message',
-            description: '⚙️ (เสริม) กำหนดข้อความหน้า Verify เอง',
+            description: '⚙️ ปรับแต่งข้อความหน้า Verify (เลือกใส่เฉพาะที่ต้องการแก้ได้)',
             options: [
-                { name: 'title', description: 'หัวข้อ', type: ApplicationCommandOptionType.String, required: true },
-                { name: 'description', description: 'เนื้อหา', type: ApplicationCommandOptionType.String, required: true }
+                { name: 'title', description: 'หัวข้อ (Title)', type: ApplicationCommandOptionType.String, required: false },
+                { name: 'description', description: 'เนื้อหา (Description)', type: ApplicationCommandOptionType.String, required: false },
+                { name: 'footer', description: 'ข้อความเล็กด้านล่าง (Footer)', type: ApplicationCommandOptionType.String, required: false }, // <-- เพิ่มใหม่
+                { name: 'button_label', description: 'ชื่อบนปุ่ม (Button Text)', type: ApplicationCommandOptionType.String, required: false } // <-- เพิ่มใหม่
             ]
         }
     ];
@@ -107,10 +108,10 @@ client.on('interactionCreate', async (interaction) => {
             const embed = new EmbedBuilder()
                 .setColor(0x00AAFF)
                 .setTitle('🤖 คู่มือการใช้งาน Bot')
-                .setDescription('บอท Verify ที่แอดมินตั้งค่าได้เองทุกอย่าง!')
+                .setDescription('บอท Verify ที่ปรับแต่งข้อความได้เอง!')
                 .addFields(
-                    { name: '🛠️ ขั้นตอนการติดตั้ง', value: '1. ใช้ `/roleid` เพื่อเลือกยศที่จะแจก\n2. ใช้ `/verifylog` เพื่อเลือกห้อง Log\n3. ใช้ `/verify` เพื่อเสกปุ่มออกมา' },
-                    { name: '⚠️ ข้อควรระวัง', value: 'อย่าลืมลากยศของบอท ให้ **อยู่สูงกว่า** ยศที่จะแจก ไม่งั้นบอทจะแจกยศไม่ได้' }
+                    { name: '🛠️ การตั้งค่า', value: '`/roleid` - เลือกยศที่จะแจก\n`/verifylog` - เลือกห้อง Log\n`/set-message` - แก้ข้อความและปุ่ม' },
+                    { name: '🚀 การใช้งาน', value: '`/verify` - เสกปุ่มออกมาใช้งาน' }
                 )
                 .setFooter({ text: 'Public Verify Bot System' });
             return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
@@ -127,12 +128,9 @@ client.on('interactionCreate', async (interaction) => {
         // --- /roleID ---
         if (interaction.commandName === 'roleid') {
             const role = interaction.options.getRole('role');
-            
-            // เช็ค Position ยศ
             if (role.position >= interaction.guild.members.me.roles.highest.position) {
                 return interaction.reply({ content: '⚠️ **Error:** ยศบอทอยู่ต่ำกว่ายศที่คุณเลือก! กรุณาเลื่อนยศบอทขึ้นไปบนสุดก่อนครับ', flags: MessageFlags.Ephemeral });
             }
-
             db[interaction.guildId].roleId = role.id;
             saveDatabase(db);
             await interaction.reply({ content: `✅ บันทึก Role: **${role.name}** เรียบร้อย!`, flags: MessageFlags.Ephemeral });
@@ -146,22 +144,45 @@ client.on('interactionCreate', async (interaction) => {
             await interaction.reply({ content: `✅ บันทึกห้อง Log: ${channel} เรียบร้อย!`, flags: MessageFlags.Ephemeral });
         }
 
-        // --- /set-message ---
+        // --- /set-message (อัปเกรดใหม่) ---
         if (interaction.commandName === 'set-message') {
-            db[interaction.guildId].customTitle = interaction.options.getString('title');
-            db[interaction.guildId].customDesc = interaction.options.getString('description');
+            const title = interaction.options.getString('title');
+            const desc = interaction.options.getString('description');
+            const footer = interaction.options.getString('footer');
+            const btnLabel = interaction.options.getString('button_label');
+            
+            // อัปเดตเฉพาะค่าที่ User กรอกมา (ถ้าไม่กรอกให้ใช้ค่าเดิม)
+            if (title) db[interaction.guildId].customTitle = title;
+            if (desc) db[interaction.guildId].customDesc = desc;
+            if (footer) db[interaction.guildId].customFooter = footer;
+            if (btnLabel) db[interaction.guildId].customBtnLabel = btnLabel;
+            
             saveDatabase(db);
-            await interaction.reply({ content: `✅ บันทึกข้อความ Verify ใหม่เรียบร้อย!`, flags: MessageFlags.Ephemeral });
+            await interaction.reply({ 
+                content: `✅ **อัปเดตข้อความเรียบร้อย!**\nTitle: ${title || '(คงเดิม)'}\nDesc: ${desc || '(คงเดิม)'}\nFooter: ${footer || '(คงเดิม)'}\nButton: ${btnLabel || '(คงเดิม)'}`, 
+                flags: MessageFlags.Ephemeral 
+            });
         }
 
-        // --- /verify (เสกปุ่ม) ---
+        // --- /verify (เสกปุ่มตามที่ตั้งค่า) ---
         if (interaction.commandName === 'verify') {
-            // ดึงข้อความ (ถ้าไม่มีให้ใช้ Default)
+            // ดึงค่า Config (ถ้าไม่มีให้ใช้ Default)
             const title = db[interaction.guildId].customTitle || '🔐 Verification Required';
             const desc = db[interaction.guildId].customDesc || 'กรุณากดปุ่มด้านล่าง และกรอกข้อมูลให้ครบถ้วนเพื่อเข้าสู่เซิร์ฟเวอร์';
+            const footer = db[interaction.guildId].customFooter || 'กดปุ่มเพื่อเริ่มยืนยันตัวตน';
+            const btnLabel = db[interaction.guildId].customBtnLabel || 'Verify Now'; // <-- ชื่อปุ่ม
 
-            const embed = new EmbedBuilder().setColor(0x00FF00).setTitle(title).setDescription(desc);
-            const btn = new ButtonBuilder().setCustomId('btn_verify_public').setLabel('Verify Now').setStyle(ButtonStyle.Success).setEmoji('✅');
+            const embed = new EmbedBuilder()
+                .setColor(0x00FF00)
+                .setTitle(title)
+                .setDescription(desc)
+                .setFooter({ text: footer }); // <-- ใส่ Footer
+
+            const btn = new ButtonBuilder()
+                .setCustomId('btn_verify_public')
+                .setLabel(btnLabel) // <-- ใส่ชื่อปุ่ม
+                .setStyle(ButtonStyle.Success)
+                .setEmoji('✅');
 
             await interaction.reply({ embeds: [embed], components: [new ActionRowBuilder().addComponents(btn)] });
         }
@@ -186,10 +207,8 @@ client.on('interactionCreate', async (interaction) => {
 
         if (isNaN(age)) return interaction.reply({ content: '❌ กรุณากรอกอายุเป็นตัวเลขเท่านั้นครับ', flags: MessageFlags.Ephemeral });
 
-        // อ่าน Config ของเซิร์ฟนี้
         const config = db[interaction.guildId];
         
-        // เช็คว่า Admin ตั้งค่าหรือยัง?
         if (!config || !config.roleId) {
             return interaction.reply({ content: '❌ Admin ยังไม่ได้ตั้งค่า Role (ใช้คำสั่ง `/roleID` ก่อน)', flags: MessageFlags.Ephemeral });
         }
@@ -201,7 +220,6 @@ client.on('interactionCreate', async (interaction) => {
             await interaction.member.roles.add(role);
             await interaction.reply({ content: `✅ ยืนยันตัวตนสำเร็จ! ยินดีต้อนรับ **${name}**`, flags: MessageFlags.Ephemeral });
 
-            // ส่ง Log
             if (config.logChannelId) {
                 const logChan = interaction.guild.channels.cache.get(config.logChannelId);
                 if (logChan) {
